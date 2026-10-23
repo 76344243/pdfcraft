@@ -506,7 +506,7 @@ pub(crate) fn pixels(doc: &Document, s: &Stream, n: usize, budget: &mut ImageBud
 /// to three bytes for each of them and of a PNG predictor's bytes a row (ASCIIHex text under
 /// Flate, its two digits a byte broken into lines or spaced). More can only be a decompression
 /// bomb, and the image is left alone.
-fn allowance(bytes: usize, rows: u32) -> Option<usize> {
+pub(crate) fn allowance(bytes: usize, rows: u32) -> Option<usize> {
     bytes.checked_add(usize::try_from(rows).ok()?)?.checked_mul(3)?.checked_add(4096)
 }
 
@@ -1259,7 +1259,13 @@ pub(crate) fn run(
             continue;
         }
         let n = s.dict.get(b"ColorSpace").and_then(|cs| components(doc, cs));
-        let processed = n.and_then(|n| process(doc, s, ppi, if n == 1 { &settings.gray } else { &settings.color }, n, budget));
+        // CMYK images (print PDFs) keep their colours and stored values (crate::cmyk).
+        let cmyk = s.dict.get(b"ColorSpace").is_some_and(|cs| crate::cmyk::is_cmyk(doc, cs));
+        let processed = if cmyk {
+            crate::cmyk::process(doc, s, ppi, &settings.color, budget).map(|new| (new, None))
+        } else {
+            n.and_then(|n| process(doc, s, ppi, if n == 1 { &settings.gray } else { &settings.color }, n, budget))
+        };
         // A dithered scan, say, downsampled and JPEG-compressed: the smaller wins, counting a soft
         // mask resampled with it.
         let smask_len = |smask: Option<&(ObjRef, Stream)>| match smask {

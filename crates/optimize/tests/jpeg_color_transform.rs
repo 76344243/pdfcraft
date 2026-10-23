@@ -313,19 +313,23 @@ fn optimize_keeps_the_colours_of_an_rgb_jpeg_whatever_its_colour_transform() {
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
 
+/// CMYK JPEGs (print PDFs) are resampled and recompressed as CMYK when their stored samples are
+/// unambiguous: plain CMYK, with or without an Adobe marker saying so, and no `/ColorTransform`
+/// other than 0. YCCK (an Adobe marker's transform 2) and a `/ColorTransform` of 1, which some
+/// readers apply and others don't, are left as they are. Either way the page looks the same.
 #[test]
-fn optimize_leaves_cmyk_jpegs_as_they_are_with_or_without_an_adobe_marker() {
-    // 256 px drawn at 288 ppi: Reduce File Size would resample a colour space it handles.
+fn optimize_shrinks_cmyk_jpegs_whose_samples_are_unambiguous_and_leaves_the_rest() {
+    // 256 px drawn at 288 ppi: Reduce File Size resamples it to 150 ppi.
     let (w, h) = (256u16, 256u16);
     let block = |bx: u16, by: u16| [(bx * 8) as u8, (by * 8) as u8, (255 - (bx + by) * 4) as u8, ((bx ^ by) * 8) as u8];
-    for (adobe, parms) in [
-        (None, Parms::None),
-        (None, Parms::Dict(0)),
-        (None, Parms::Dict(1)),
-        (Some(0), Parms::None),
-        (Some(0), Parms::Dict(1)),
-        (Some(2), Parms::None),
-        (Some(2), Parms::Dict(0)),
+    for (adobe, parms, resampled) in [
+        (None, Parms::None, true),
+        (None, Parms::Dict(0), true),
+        (None, Parms::Dict(1), false),
+        (Some(0), Parms::None, true),
+        (Some(0), Parms::Dict(1), false),
+        (Some(2), Parms::None, false),
+        (Some(2), Parms::Dict(0), false),
     ] {
         let what = format!("Adobe marker {adobe:?}, {parms:?}");
         let jpeg = four_component_jpeg(w, h, adobe, block);
@@ -333,8 +337,17 @@ fn optimize_leaves_cmyk_jpegs_as_they_are_with_or_without_an_adobe_marker() {
         let original = doc.get(img);
         let before = render(&doc, 4.0);
         optimize(&mut doc, &Settings::default()).unwrap();
-        assert_eq!(doc.get(img), original, "{what}: left as it is");
-        assert!(before == render(&doc, 4.0), "{what}: the page looks the same");
+        let after = render(&doc, 4.0);
+        if resampled {
+            let new = stream(&doc, img);
+            assert_eq!(new.dict.int(b"Width"), Some(133), "{what}: resampled to 150 ppi");
+            assert_eq!(new.dict.name(b"ColorSpace"), Some(&b"DeviceCMYK"[..]), "{what}: still CMYK");
+            let difference = mean_difference(&before, &after);
+            assert!(difference <= TOLERANCE, "{what}: colours moved by {difference:.1}");
+        } else {
+            assert_eq!(doc.get(img), original, "{what}: left as it is");
+            assert!(before == after, "{what}: the page looks the same");
+        }
     }
 }
 

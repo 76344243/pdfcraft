@@ -21,6 +21,8 @@ thiserror.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 # The same JPEG decoder, used directly to read samples untransformed (/ColorTransform 0).
 zune-jpeg = "0.5"
+# CMYK images: writing four-component JPEGs (crate::cmyk).
+jpeg-encoder = "0.7"
 
 [dev-dependencies]
 pdfcraft-render = { workspace = true }

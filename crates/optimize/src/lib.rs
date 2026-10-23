@@ -8,9 +8,10 @@
 //!   smallest over its uses, through form XObjects); colour and grayscale images above a
 //!   threshold are resampled (bicubic) to a target resolution and recompressed as JPEG or Flate.
 //!   A new image replaces the old one only if it is smaller. The colour and grey settings leave
-//!   alone images they can't decode faithfully (CMYK and other colour spaces, masks, decode arrays
+//!   alone images they can't decode faithfully (other colour spaces, masks, decode arrays
 //!   other than the default, JPEG 2000, JBIG2, CCITT, other than 8 bits, JPEGs whose Adobe marker
-//!   and `/ColorTransform` disagree). Black-and-white images (1-bit, image masks, CCITT fax and JBIG2,
+//!   and `/ColorTransform` disagree). CMYK images are resampled and recompressed as CMYK,
+//!   keeping their stored values (see [`cmyk`]). Black-and-white images (1-bit, image masks, CCITT fax and JBIG2,
 //!   Group 3 among them; and eight-bit grey and RGB of only black and white, and indexed images
 //!   that use only palette entries 0 and 1, packed to one bit) above a threshold are averaged down to a
 //!   target resolution when grey, image masks or indexed, halftones and dithers aside (see the README), and
@@ -29,6 +30,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod audit;
+mod cmyk;
 pub mod fragments;
 mod images;
 mod links;

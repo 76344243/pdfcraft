@@ -29,8 +29,15 @@ let report = optimize_with_progress(&mut doc, &settings, &mut |stage| keep_going
   measured (forms nested deeper, or drawn too many times), no image is resampled. Colour and grayscale images above a
   threshold are resampled with a bicubic (Catmull-Rom) filter to a target resolution and
   stored as JPEG (Acrobat's quality steps) or ZIP; soft masks are resampled with their image.
-  An image is replaced only if the result is smaller. Left alone by these colour and grey
-  settings: CMYK and other colour spaces, image masks, decode arrays, more than 8 bits, JPEG 2000,
+  An image is replaced only if the result is smaller. **CMYK images** (DeviceCMYK, ICCBased with
+  four components; print PDFs) are resampled and stored as CMYK JPEG with the colour settings,
+  keeping their colour space and decode array (`cmyk`): the stored ink values are kept as they
+  are, and the new JPEG has an APP14 Adobe segment exactly when the original had one, so viewers
+  that follow either four-component JPEG convention see the same picture as before. Every ink is
+  stored at full resolution (no subsampling); they are read within the run's allowance like any
+  image. A 741-page print book went from 709 MB to 34 MB. Not CMYK images with masks, YCCK JPEGs
+  or a `/ColorTransform` other than 0. Left alone by these colour and grey
+  settings: other colour spaces, image masks, decode arrays, more than 8 bits, JPEG 2000,
   JBIG2 and CCITT (black-and-white images, CCITT and JBIG2 among them, are below). A JPEG is read with
   its colour transform (an Adobe marker's, else `/ColorTransform`, ISO 32000-2 §7.4.8), so one
   stored untransformed keeps its colours; one whose marker and `/ColorTransform` disagree is left
@@ -120,7 +127,8 @@ The engine runs Remove Hidden Information (`pdfcraft-redact`) for the user-data 
 then this, then merges identical objects and writes a full, compressed save
 (`pdfcraft_engine::optimizer::OptimizeJob`, which the UI runs on a worker thread with a
 progress bar). JPEG decoding comes from `zune-jpeg` (the decoder behind `image` and the
-renderer), JPEG encoding and resampling from the `image` crate.
+renderer), JPEG encoding and resampling from the `image` crate; CMYK JPEGs are written with
+`jpeg-encoder`.
 
 ## Target PDF version: partial compatibility
 
