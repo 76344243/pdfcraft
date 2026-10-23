@@ -25,8 +25,15 @@ let report = optimize_with_progress(&mut doc, &settings, &mut |stage| keep_going
   measured (forms nested deeper, or drawn too many times), no image is resampled. Colour and grayscale images above a
   threshold are resampled with a bicubic (Catmull-Rom) filter to a target resolution and
   stored as JPEG (Acrobat's quality steps) or ZIP; soft masks are resampled with their image.
-  An image is replaced only if the result is smaller. Left alone: CMYK and other colour spaces,
-  image masks, decode arrays, more than 8 bits, JPEG 2000, JBIG2 and CCITT.
+  An image is replaced only if the result is smaller. **CMYK images** (DeviceCMYK, ICCBased with
+  four components; print PDFs) are resampled and stored as CMYK JPEG with the colour settings,
+  keeping their colour space and decode array (`cmyk`): the stored ink values are kept as they
+  are, and the new JPEG has an APP14 Adobe segment exactly when the original had one, so viewers
+  that follow either four-component JPEG convention see the same picture as before. Every ink is
+  stored at full resolution (no subsampling). A 741-page print book went from 709 MB to 34 MB.
+  Left alone: CMYK images with masks and YCCK JPEGs, other colour spaces (Lab, DeviceN,
+  Separation, Indexed), image masks, decode arrays other than the default, more than 8 bits,
+  JPEG 2000, JBIG2 and CCITT.
 - **Discard objects:** thumbnails, alternate images, document tags, print settings.
 - **Clean up:** Flate for streams with no filter; for streams with an outer ASCII85 or ASCIIHex
   layer, that layer is removed when the result is smaller (the inner filters keep their encoded
@@ -36,4 +43,5 @@ The engine runs Remove Hidden Information (`pdfcraft-redact`) for the user-data 
 then this, then merges identical objects and writes a full, compressed save
 (`pdfcraft_engine::optimizer::OptimizeJob`, which the UI runs on a worker thread with a
 progress bar). JPEG decoding and
-encoding and resampling come from the `image` crate.
+encoding and resampling come from the `image` crate; CMYK JPEGs are read with `zune-jpeg` and written
+with `jpeg-encoder`.

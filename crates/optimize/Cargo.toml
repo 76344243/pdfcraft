@@ -18,6 +18,9 @@ pdfcraft-annot = { workspace = true }
 thiserror.workspace = true
 # JPEG decoding (zune-jpeg) and encoding, and bicubic resampling; already in the tree.
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
+# CMYK images: reading the stored samples of four-component JPEGs, and writing them (crate::cmyk).
+zune-jpeg = "0.5"
+jpeg-encoder = "0.7"
 
 [dev-dependencies]
 pdfcraft-render = { workspace = true }

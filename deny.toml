@@ -70,3 +70,9 @@ allow = ["OFL-1.1", "Ubuntu-font-1.0"]
 [[licenses.exceptions]]
 crate = "webpki-root-certs"
 allow = ["CDLA-Permissive-2.0"]
+
+# jpeg-encoder writes the CMYK JPEGs of Reduce File Size (pdfcraft-optimize's cmyk module); its
+# Huffman tables and DCT come from libjpeg, hence the IJG terms beside MIT OR Apache-2.0.
+[[licenses.exceptions]]
+crate = "jpeg-encoder"
+allow = ["IJG"]

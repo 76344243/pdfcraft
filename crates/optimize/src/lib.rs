@@ -8,8 +8,9 @@
 //!   smallest over its uses, through form XObjects); colour and grayscale images above a
 //!   threshold are resampled (bicubic) to a target resolution and recompressed as JPEG or Flate.
 //!   A new image replaces the old one only if it is smaller. Images PdfCraft can't decode
-//!   faithfully (CMYK and other colour spaces, masks, decode arrays other than the default,
-//!   JPEG 2000, JBIG2, CCITT, other than 8 bits) are left alone.
+//!   faithfully (other colour spaces, masks, decode arrays other than the default,
+//!   JPEG 2000, JBIG2, CCITT, other than 8 bits) are left alone. CMYK images are resampled and
+//!   recompressed as CMYK, keeping their stored values (see [`cmyk`]).
 //! - **Discard objects:** page thumbnails, alternate images, document tags (structure tree),
 //!   print settings.
 //! - **Clean up:** drop images and forms that pages list but never draw (such as a deleted
@@ -23,6 +24,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod audit;
+mod cmyk;
 pub mod fragments;
 mod images;
 mod links;

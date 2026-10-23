@@ -1139,3 +1139,95 @@ fn named_dest_keys(doc: &Document) -> Vec<Vec<u8>> {
     let arr = doc.resolve(tree.get(b"Names").unwrap()).as_array().cloned().unwrap();
     arr.chunks(2).filter_map(|c| doc.resolve(&c[0]).as_string().map(|s| s.bytes.clone())).collect()
 }
+
+/// A CMYK image `w`×`h`: a smooth photo-like gradient in all four inks, stored as Flate, or as a
+/// four-component JPEG with or without an APP14 Adobe segment (`Some(adobe)`).
+fn cmyk_image(doc: &mut Document, w: u32, h: u32, jpeg: Option<bool>) -> ObjRef {
+    let mut px = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            px.extend_from_slice(&[(x * 255 / w) as u8, (y * 255 / h) as u8, ((x + y) * 127 / (w + h)) as u8 + 60, ((x ^ y) & 15) as u8 + 10]);
+        }
+    }
+    let mut d = Dict::new();
+    d.set(b"Type".to_vec(), Object::name("XObject"));
+    d.set(b"Subtype".to_vec(), Object::name("Image"));
+    d.set(b"Width".to_vec(), Object::Int(w as i64));
+    d.set(b"Height".to_vec(), Object::Int(h as i64));
+    d.set(b"BitsPerComponent".to_vec(), Object::Int(8));
+    d.set(b"ColorSpace".to_vec(), Object::name("DeviceCMYK"));
+    let s = match jpeg {
+        None => Stream::flate(d, &px),
+        Some(adobe) => {
+            // jpeg-encoder writes the Adobe convention (inverted samples, APP14 Adobe); without
+            // the segment the plain samples are written.
+            let mut out = Vec::new();
+            let samples: Vec<u8> = if adobe { px.iter().map(|v| 255 - v).collect() } else { px.clone() };
+            let mut enc = jpeg_encoder::Encoder::new(&mut out, 98);
+            enc.set_sampling_factor(jpeg_encoder::SamplingFactor::F_1_1);
+            enc.encode(&samples, w as u16, h as u16, jpeg_encoder::ColorType::Cmyk).unwrap();
+            if !adobe {
+                // Drop the APP14 segment jpeg-encoder always writes for CMYK.
+                let at = out.windows(7).position(|s| s[..2] == [0xFF, 0xEE] && &s[4..] == b"Ado").unwrap();
+                let len = u16::from_be_bytes([out[at + 2], out[at + 3]]) as usize;
+                out.drain(at..at + 2 + len);
+            }
+            d.set(b"Filter".to_vec(), Object::name("DCTDecode"));
+            Stream::from_raw(d, out)
+        }
+    };
+    doc.add(Object::Stream(s))
+}
+
+fn render_rgba(bytes: Vec<u8>) -> (u32, Vec<u8>) {
+    let mut r = pdfcraft_render::PageRenderer::new(Arc::new(bytes), pdfcraft_render::RenderConfig::default());
+    let out = r.render(pdfcraft_render::RenderRequest { page: 0, scale: 1.0, ..Default::default() });
+    assert!(out.error.is_none(), "{:?}", out.error);
+    (out.width, out.rgba.to_vec())
+}
+
+/// Print PDFs keep their pictures in CMYK, often barely compressed at high resolution. Reduce
+/// File Size used to leave every one of them alone; it now downsamples and recompresses them as
+/// CMYK, and the page looks as it did, whichever way the original JPEG stored its inks.
+#[test]
+fn reduce_shrinks_cmyk_images_and_keeps_their_colours() {
+    let mut doc = Document::new_empty();
+    // Three 1200 px CMYK images, each drawn 144 pt (2 in) wide: 600 ppi.
+    let flate = cmyk_image(&mut doc, 1200, 1200, None);
+    let adobe = cmyk_image(&mut doc, 1200, 1200, Some(true));
+    let plain = cmyk_image(&mut doc, 1200, 1200, Some(false));
+    page(
+        &mut doc,
+        &[("A", flate), ("B", adobe), ("C", plain)],
+        "q 144 0 0 144 36 600 cm /A Do Q q 144 0 0 144 234 600 cm /B Do Q q 144 0 0 144 432 600 cm /C Do Q",
+    );
+    let before_bytes = write_full(&doc, &SaveOptions::default()).unwrap();
+    let report = optimize(&mut doc, &Settings::default()).unwrap();
+    assert_eq!(report.images_resampled, 3, "{report:?}");
+    for r in [flate, adobe, plain] {
+        let s = stream(&doc, r);
+        assert_eq!((s.dict.int(b"Width"), s.dict.name(b"Filter")), (Some(300), Some(&b"DCTDecode"[..])));
+        assert_eq!(s.dict.name(b"ColorSpace"), Some(&b"DeviceCMYK"[..]), "the inks stay CMYK");
+    }
+    let after_bytes = write_full(&doc, &SaveOptions::default()).unwrap();
+    assert!(after_bytes.len() * 10 < before_bytes.len(), "{} → {}", before_bytes.len(), after_bytes.len());
+
+    // Rendered by PdfCraft, each picture looks as it did (a few levels of JPEG and resampling
+    // difference; an inverted or subsampled ink would be off by dozens).
+    let (w, before) = render_rgba(before_bytes);
+    let (_, after) = render_rgba(after_bytes);
+    for (name, left) in [("flate", 36u32), ("adobe", 234), ("plain", 432)] {
+        let (mut sum, mut n) = (0f64, 0f64);
+        // Inside the picture, away from its edges: x left+10..left+134, y (from the top) 58..182.
+        for y in 58..182u32 {
+            for x in left + 10..left + 134 {
+                let i = ((y * w + x) * 4) as usize;
+                for c in 0..3 {
+                    sum += (f64::from(before[i + c]) - f64::from(after[i + c])).abs();
+                    n += 1.0;
+                }
+            }
+        }
+        assert!(sum / n < 4.0, "{name}: the picture changed by {:.1} levels on average", sum / n);
+    }
+}

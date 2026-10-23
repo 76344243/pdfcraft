@@ -427,9 +427,16 @@ pub(crate) fn run(
         let obj = doc.get(r);
         let Object::Stream(s) = &*obj else { continue };
         report.images += 1;
-        let Some(n) = s.dict.get(b"ColorSpace").and_then(|cs| components(doc, cs)) else { continue };
-        let st = if n == 1 { &settings.gray } else { &settings.color };
-        let Some((new, smask)) = process(doc, s, ppi, st, n) else { continue };
+        let Some(cs) = s.dict.get(b"ColorSpace") else { continue };
+        // CMYK images (print PDFs) keep their colours and stored values (crate::cmyk).
+        let result = if crate::cmyk::is_cmyk(doc, cs) {
+            crate::cmyk::process(s, ppi, &settings.color).map(|new| (new, None))
+        } else {
+            let Some(n) = components(doc, cs) else { continue };
+            let st = if n == 1 { &settings.gray } else { &settings.color };
+            process(doc, s, ppi, st, n)
+        };
+        let Some((new, smask)) = result else { continue };
         let resized = new.dict.int(b"Width") != s.dict.int(b"Width") || new.dict.int(b"Height") != s.dict.int(b"Height");
         report.image_bytes_before += s.raw.len();
         report.image_bytes_after += new.raw.len();
