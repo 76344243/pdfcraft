@@ -1,0 +1,35 @@
+# Fork only (76344243): builds the customised app for Apple Silicon Macs whenever the
+# `mein-stand` branch changes, and publishes the DMG as a GitHub release of this fork.
+# Ad-hoc signed: on first launch macOS asks once (System Settings › Privacy & Security › Open Anyway).
+name: Fork – Mac-Build
+
+on:
+  push:
+    branches: [mein-stand]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fork-macos
+  cancel-in-progress: true
+
+jobs:
+  mac:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Build and package (aarch64, ad-hoc signed)
+        run: packaging/macos/package.sh --arch aarch64
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="mein-stand-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"
+          notes="Angepasster Stand: $(git log -1 --format='%h %s')"
+          gh release create "$tag" dist/release/*.dmg --title "$tag" --notes "$notes" --target "$GITHUB_SHA"
