@@ -791,6 +791,9 @@
 	Couldn't check for updates: {e}	Updates konnten nicht gesucht werden: {e}
 	You have version {c}. All releases are listed at {page}.	Du hast Version {c}. Alle Releases findest du unter {page}.
 	Asks GitHub for the latest release. Nothing is downloaded or installed automatically.	Fragt GitHub nach dem neuesten Release. Es wird nichts automatisch heruntergeladen oder installiert.
+	A new version with your customisations is ready ({v}).	Eine neue Version mit deinen Anpassungen ist da ({v}).
+	You have {c}. The ArtCraft-Updater installs the new version by itself once PdfCraft is closed.	Du hast {c}. Der ArtCraft-Updater installiert die neue Version selbst, sobald PdfCraft beendet ist.
+	Asks your fork on GitHub for the latest release. The ArtCraft-Updater installs new versions automatically.	Fragt deinen Fork auf GitHub nach dem neuesten Release. Der ArtCraft-Updater installiert neue Versionen automatisch.
 	Download	Herunterladen
 	Later	Später
 	none	keine

@@ -11,8 +11,13 @@ use egui::{Align, Layout};
 
 use crate::{PdfCraftApp, theme, widgets};
 
-/// Where every PdfCraft release is listed.
-pub const RELEASES_PAGE: &str = "https://github.com/storytold/pdfcraft/releases";
+/// Where every PdfCraft release is listed. Fork patch (76344243/pdfcraft): this build's own
+/// fork, whose releases carry the customisations; the ArtCraft-Updater installs them.
+pub const RELEASES_PAGE: &str = "https://github.com/76344243/pdfcraft/releases";
+
+/// Fork patch: the fork release this build was made for (the fork's Mac-Build workflow sets
+/// `PDFCRAFT_FORK_TAG`), `None` in other builds.
+pub const FORK_TAG: Option<&str> = option_env!("PDFCRAFT_FORK_TAG");
 
 /// The latest published release.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,6 +34,11 @@ pub type UpdateSource = Arc<dyn Fn() -> Result<Release, String> + Send + Sync>;
 /// Whether release `latest` (a tag such as `v0.2.0`) is newer than version `current` (`0.1.1`).
 /// Pre-release and build suffixes are ignored; a version that doesn't parse is never newer.
 pub fn is_newer(latest: &str, current: &str) -> bool {
+    // Fork patch: fork releases are named by date, not version, and only ever move forward, so
+    // any fork release other than the one this build was made for is newer.
+    if let Some(built) = FORK_TAG {
+        return !latest.trim().is_empty() && latest.trim() != built;
+    }
     matches!((parse(latest), parse(current)), (Some(l), Some(c)) if l > c)
 }
 
@@ -113,7 +123,10 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
         return;
     }
     let t = theme::Tokens::get(ctx);
-    let current = env!("CARGO_PKG_VERSION");
+    let version = env!("CARGO_PKG_VERSION");
+    // Fork patch: the fork build says which fork release it is.
+    let fork_current = FORK_TAG.map(|tag| format!("{version} ({tag})"));
+    let current = fork_current.as_deref().unwrap_or(version);
     let mut close = false;
     let mut download: Option<String> = None;
     let modal = crate::widgets::show_modal(ctx, "updates", |ui| {
@@ -133,6 +146,20 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
                     ui.spinner();
                     ui.label(tl!("Checking for a newer version…"));
                 });
+            }
+            // Fork patch: the ArtCraft-Updater installs fork releases by itself.
+            Check::Done(Ok(r)) if FORK_TAG.is_some() && is_newer(&r.version, current) => {
+                ui.label(
+                    egui::RichText::new(crate::i18n::fmt(tl!("A new version with your customisations is ready ({v})."), &[("v", &r.version)]))
+                        .strong(),
+                );
+                ui.label(
+                    egui::RichText::new(crate::i18n::fmt(
+                        tl!("You have {c}. The ArtCraft-Updater installs the new version by itself once PdfCraft is closed."),
+                        &[("c", current)],
+                    ))
+                    .color(t.text_muted),
+                );
             }
             Check::Done(Ok(r)) if is_newer(&r.version, current) => {
                 let version = r.version.trim_start_matches(['v', 'V']);
@@ -162,9 +189,14 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
         }
         ui.add_space(10.0);
         ui.label(
-            egui::RichText::new(tl!("Asks GitHub for the latest release. Nothing is downloaded or installed automatically."))
-                .color(t.text_muted)
-                .small(),
+            egui::RichText::new(if FORK_TAG.is_some() {
+                // Fork patch.
+                tl!("Asks your fork on GitHub for the latest release. The ArtCraft-Updater installs new versions automatically.")
+            } else {
+                tl!("Asks GitHub for the latest release. Nothing is downloaded or installed automatically.")
+            })
+            .color(t.text_muted)
+            .small(),
         );
         ui.add_space(12.0);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
