@@ -415,7 +415,8 @@ fn app_creator<'a>(
         {
             app.motion.source = Some(motion::source());
         }
-        app.set_startup_update_check(true);
+        // Fork patch: no check at start; the ArtCraft-Updater installs this fork's releases.
+        app.set_startup_update_check(false);
         app.printer_source = Some(pdfcraft_ui_egui::system_printers());
         app.os_key_store_ids = cfg!(any(target_os = "macos", target_os = "windows"));
         #[cfg(target_os = "macos")]
