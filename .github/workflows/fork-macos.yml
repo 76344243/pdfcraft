@@ -1,6 +1,8 @@
 # Fork only (76344243): builds the customised app for Apple Silicon Macs whenever the
 # `mein-stand` branch changes, and publishes the DMG as a GitHub release of this fork.
-# Ad-hoc signed: on first launch macOS asks once (System Settings › Privacy & Security › Open Anyway).
+# Like the original's release build it embeds the suite's fonts (storytold/craft-fonts, at the
+# ref release.yml pins) and, where the app pins one in craft-i18n.rev, the Language data
+# (storytold/craft-i18n: spelling, hyphenation). Ad-hoc signed; the ArtCraft-Updater installs it.
 name: Fork – Mac-Build
 
 on:
@@ -20,16 +22,29 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Which craft-fonts the original's release uses
+        id: fonts
+        run: echo "ref=$(grep -m1 'craft-fonts-ref:' .github/workflows/release.yml | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - name: Check out craft-fonts
+        if: steps.fonts.outputs.ref != ''
+        uses: storytold/craft-common-actions/actions/checkout-craft-fonts@main
+        with:
+          ref: ${{ steps.fonts.outputs.ref }}
+      - name: Check out craft-i18n
+        uses: storytold/craft-common-actions/actions/checkout-craft-i18n@main
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
       - uses: Swatinem/rust-cache@v2
+      - name: Release name
+        run: echo "FORK_TAG=mein-stand-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
       - name: Build and package (aarch64, ad-hoc signed)
-        run: packaging/macos/package.sh --arch aarch64
+        run: |
+          if [ -d craft-fonts ]; then export CRAFT_FONTS_DIR="$PWD/craft-fonts" CRAFT_FONTS_REQUIRED=1; fi
+          packaging/macos/package.sh --arch aarch64
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="mein-stand-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"
           notes="Angepasster Stand: $(git log -1 --format='%h %s')"
-          gh release create "$tag" dist/release/*.dmg --title "$tag" --notes "$notes" --target "$GITHUB_SHA"
+          gh release create "$FORK_TAG" dist/release/*.dmg --title "$FORK_TAG" --notes "$notes" --target "$GITHUB_SHA"
