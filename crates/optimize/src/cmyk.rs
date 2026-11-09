@@ -288,13 +288,19 @@ mod tests {
         let (w, h) = (300, 300);
         let mut d = cmyk_dict(w, h);
         d.set(b"Mask".to_vec(), Object::Array(vec![Object::Int(0), Object::Int(0)]));
-        assert!(process(&Document::new_empty(), &Stream::flate(d, &gradient(w, h)), 600.0, &ImageSettings::REDUCE, &mut ImageBudget::with_work(u64::MAX)).is_none());
+        assert!(
+            process(&Document::new_empty(), &Stream::flate(d, &gradient(w, h)), 600.0, &ImageSettings::REDUCE, &mut ImageBudget::with_work(u64::MAX))
+                .is_none()
+        );
         let mut ycck = Vec::new();
         jpeg_encoder::Encoder::new(&mut ycck, 90).encode(&gradient(w, h), 300, 300, jpeg_encoder::ColorType::CmykAsYcck).unwrap();
         assert_eq!(adobe_transform(&ycck), Some(2));
         let mut d = cmyk_dict(w, h);
         d.set(b"Filter".to_vec(), Object::name("DCTDecode"));
-        assert!(process(&Document::new_empty(), &Stream::from_raw(d, ycck), 600.0, &ImageSettings::REDUCE, &mut ImageBudget::with_work(u64::MAX)).is_none());
+        assert!(
+            process(&Document::new_empty(), &Stream::from_raw(d, ycck), 600.0, &ImageSettings::REDUCE, &mut ImageBudget::with_work(u64::MAX))
+                .is_none()
+        );
     }
 
     #[test]
