@@ -489,6 +489,39 @@ fn read_mode_hides_the_quick_toolbar() {
     h.get_by_label("Select (V)");
 }
 
+/// All tools ▸ Edit a PDF turns on Edit text & images at once, as the Edit tab does, so the page
+/// is editable without clicking Edit again. Another tool from there puts editing down.
+#[test]
+fn edit_a_pdf_from_all_tools_turns_on_editing() {
+    use pdfcraft_ui_egui::{Mode, QuickTool};
+    let mut h = harness(|app| app.open_bytes("fixture.pdf", None, FIXTURE.to_vec()).expect("fixture opens"));
+    assert_eq!(h.state().mode, Mode::AllTools);
+    assert_eq!(h.state().quick_tool, QuickTool::Select);
+    h.get_by_label("Edit a PDF").click();
+    h.run_steps(3);
+    assert_eq!(h.state().mode, Mode::AllTools, "the workspace stays All tools, with its way back");
+    assert_eq!(h.state().quick_tool, QuickTool::EditText, "Edit text & images is on at once");
+    h.state_mut().set_option("tool", "organize").unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().quick_tool, QuickTool::Select, "another tool puts editing down");
+    // In the Edit workspace, another tool from its panel leaves editing on, as before.
+    h.state_mut().set_option("mode", "edit").unwrap();
+    h.state_mut().set_option("tool", "edit").unwrap();
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::EditText);
+    h.state_mut().set_option("tool", "organize").unwrap();
+    h.run_steps(3);
+    assert_eq!(h.state().quick_tool, QuickTool::EditText);
+    // Read mode hides the quick toolbar and keeps the tools down, so the control channel's
+    // `tool edit` there leaves editing off (review on #4605).
+    h.state_mut().run_command("view.read_mode");
+    h.run_steps(2);
+    assert_eq!(h.state().mode, Mode::Read);
+    h.state_mut().set_option("tool", "edit").unwrap();
+    h.run_steps(2);
+    assert_eq!(h.state().quick_tool, QuickTool::Select, "no editing tool in Read mode");
+}
+
 /// Opening a document with Read as the default mode puts down the tool in use, as entering Read
 /// mode from the mode bar does: the hidden toolbar would leave no way to see or change it.
 #[test]
@@ -1278,6 +1311,77 @@ fn files_and_quit_from_the_operating_system() {
     assert!(closing);
 }
 
+/// #585: File Explorer's "Combine files in PdfCraft" starts one launch per selected file, and the
+/// running PdfCraft collects them (an `OsEvent::Combine` each) into its Combine files tab.
+#[test]
+fn files_to_combine_from_the_operating_system() {
+    use pdfcraft_ui_egui::OsEvent;
+    let dir = std::env::temp_dir().join(format!("pdfcraft-os-combine-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let paths: Vec<String> = ["one.pdf", "two.pdf"]
+        .iter()
+        .map(|n| {
+            let p = dir.join(n);
+            std::fs::write(&p, FIXTURE).unwrap();
+            p.to_string_lossy().into_owned()
+        })
+        .collect();
+    let queue = std::rc::Rc::new(std::cell::RefCell::new(vec![OsEvent::Combine(vec![paths[0].clone()])]));
+    let q = queue.clone();
+    let mut h = harness(move |app| app.os_events = Some(Box::new(move || q.borrow_mut().drain(..).collect())));
+    assert!(h.state().combine_showing(), "the Combine files tab shows");
+    assert!(h.state().views.is_empty(), "nothing opens as a document");
+    queue.borrow_mut().push(OsEvent::Combine(vec![paths[1].clone()]));
+    h.run_steps(3);
+    let _ = std::fs::remove_dir_all(&dir);
+    let names: Vec<_> = h.state().combine_draft.iter().map(|f| f.name.clone()).collect();
+    assert_eq!(names, ["one.pdf", "two.pdf"], "each launch's file joins the list, in order");
+    assert!(h.state().combine_showing() && h.state().views.is_empty());
+}
+
+/// #2503 review: a PDF still opening when Combine arrives opens behind the Combine files tab
+/// instead of hiding it; an Open that comes after Combine still shows its document.
+#[test]
+fn an_open_finishing_after_combine_keeps_the_combine_tab() {
+    use pdfcraft_ui_egui::OsEvent;
+    let dir = std::env::temp_dir().join(format!("pdfcraft-os-combine-pending-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let paths: Vec<String> = ["opening.pdf", "combined.pdf", "later.pdf"]
+        .iter()
+        .map(|n| {
+            let p = dir.join(n);
+            std::fs::write(&p, FIXTURE).unwrap();
+            p.to_string_lossy().into_owned()
+        })
+        .collect();
+    let queue = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let q = queue.clone();
+    let mut h = harness(move |app| app.os_events = Some(Box::new(move || q.borrow_mut().drain(..).collect())));
+    h.run_steps(2);
+    // Both in one frame: the open goes to the worker and is still pending when Combine shows.
+    queue.borrow_mut().extend([OsEvent::Open(vec![paths[0].clone()]), OsEvent::Combine(vec![paths[1].clone()])]);
+    for _ in 0..200 {
+        h.run_steps(1);
+        if !h.state().views.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(h.state().views.len(), 1, "the earlier open finished");
+    assert!(h.state().combine_showing(), "and the Combine files tab still shows");
+    queue.borrow_mut().push(OsEvent::Open(vec![paths[2].clone()]));
+    for _ in 0..200 {
+        h.run_steps(1);
+        if h.state().views.len() == 2 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(h.state().views.len(), 2);
+    assert!(!h.state().combine_showing() && h.state().active == Some(1), "a later Open shows its document");
+}
+
 #[test]
 fn default_workspace_mode_persists_and_tolerates_invalid_settings() {
     use pdfcraft_ui_egui::Mode;
@@ -2028,4 +2132,42 @@ fn full_screen_neither_is_remembered_nor_hides_the_last_view() {
     let view = &mut h.state_mut().views[0];
     view.leave_presentation();
     assert_eq!((view.fit, view.zoom, view.layout, view.continuous), (Fit::None, 0.5, PageLayout::TwoUp, false), "the remembered view");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn home_recent_context_menu_reveals_the_target_without_opening_or_removing_it() {
+    let missing = std::env::temp_dir().join(format!("pdfcraft-recent-missing-{}", std::process::id())).join("jährlicher report.pdf");
+    assert!(!missing.exists());
+    let expected = missing.to_string_lossy().into_owned();
+    let target = expected.clone();
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 1600.0)).build_eframe(move |_| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        // The existence check runs on a worker otherwise, which can lose the race with the
+        // fixed frame count below on a busy runner.
+        app.run_inline = true;
+        for (name, path) in [("first.pdf", ".".to_owned()), ("target.pdf", target)] {
+            app.recent.push(pdfcraft_ui_egui::RecentFile { name: name.into(), path, pages: 1, size: 0 });
+        }
+        app
+    });
+    h.run_steps(4);
+    let label = if cfg!(target_os = "macos") { "Reveal in Finder" } else { "Reveal in File Explorer" };
+    h.get_by_label("target.pdf").click_secondary();
+    h.run_steps(3);
+    assert!(!h.get_by_label(label).accesskit_node().is_disabled());
+    assert!(h.state().views.is_empty(), "right-click must not open the PDF");
+    assert_eq!(h.state().recent.len(), 2);
+    h.get_by_label(label).click();
+    h.run_steps(3);
+    assert!(h.query_by_label(label).is_none(), "choosing the action closes its menu");
+    assert!(h.state().views.is_empty(), "reveal must not open the PDF");
+    assert_eq!(h.state().active, None);
+    assert_eq!(h.state().recent.len(), 2, "reveal must not remove missing recent files");
+    assert_eq!(h.state().recent[1].path, expected);
+    assert!(
+        h.state().toast.as_ref().is_some_and(|(text, _)| text.contains("The file no longer exists")),
+        "the selected path is checked and the existing reveal error is shown"
+    );
 }

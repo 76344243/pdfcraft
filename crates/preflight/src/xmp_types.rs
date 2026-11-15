@@ -4,7 +4,10 @@
 //! The types come from ISO 16684-1:2011 (XMP Part 1) clause 8 for the Dublin Core, XMP Basic and
 //! XMP Rights Management namespaces, and from XMP Specification Part 2 (Additional Properties) for
 //! the Media Management, Basic Job Ticket, Paged-Text, Dynamic Media, Adobe PDF, Photoshop and
-//! Camera Raw namespaces, with the structures they use. A value is read as RDF/XML serializes it
+//! Camera Raw namespaces, with the structures they use. The TIFF, EXIF and Additional EXIF (`aux`)
+//! namespaces, which the current Part 2 leaves to CIPA DC-010, come from the September 2005 XMP
+//! Specification that PDF/A-2 cites: "EXIF Schemas" (pages 58–70) and "EXIF Schema Value Types"
+//! (pages 83–87). A value is read as RDF/XML serializes it
 //! (ISO 16684-1 7.9): a simple value as text or an attribute, an array as `rdf:Seq`, `rdf:Bag` or
 //! `rdf:Alt`, a structure as `rdf:parseType="Resource"`, an `rdf:Description` or attributes, and a
 //! qualified value through its `rdf:value` (element or attribute). Every metadata stream of the
@@ -12,14 +15,16 @@
 //!
 //! The simple types are checked by their lexical form (ISO 16684-1 8.2.1): Boolean is `True` or
 //! `False`; Integer an optionally signed run of digits; Real a decimal; Date one of the six forms
-//! of 8.2.1.2; Rational two integers around a `/`, as Part 2's `xmpDM:scale` example writes it.
+//! of 8.2.1.2; Rational two integers around a `/`, as Part 2's `xmpDM:scale` example writes it and
+//! the 2005 edition defines it (page 84); GPSCoordinate `DDD,MM,SSk` or `DDD,MM.mmk` (page 85).
 //! The other simple types are text. A field a structure doesn't define, and a property a
 //! namespace doesn't define, are left to the clauses about them.
 
 use std::collections::BTreeMap;
 
+use crate::xmp::NsScope;
+use craft_xml::El;
 use pdfcraft_cos::{DecodeBudget, ObjRef, Object};
-use roxmltree::Node;
 
 /// How deep arrays, structures and qualifiers are followed. No type nests nearly this deep, so a
 /// value nested deeper doesn't have its type.
@@ -43,6 +48,8 @@ enum Ty {
     Boolean,
     Date,
     Rational,
+    /// `DDD,MM,SSk` or `DDD,MM.mmk`, `k` one of N, S, E, W (2005 edition, page 85).
+    GpsCoordinate,
     /// An alternative array of text items, each with an `xml:lang` (ISO 16684-1 8.2.2.4).
     LangAlt,
     Seq(&'static Ty),
@@ -202,6 +209,19 @@ const TRACK: &[Field] = &[
 const ANCESTOR: &[Field] = &[(PHOTOSHOP, "AncestorID", Text)];
 /// Part 2 Table 32.
 const LAYER: &[Field] = &[(PHOTOSHOP, "LayerName", Text), (PHOTOSHOP, "LayerText", Text)];
+
+const EXIF: &str = "http://ns.adobe.com/exif/1.0/";
+
+/// Flash (2005 edition, page 85).
+const FLASH: &[Field] =
+    &[(EXIF, "Fired", Boolean), (EXIF, "Return", Integer), (EXIF, "Mode", Integer), (EXIF, "Function", Boolean), (EXIF, "RedEyeMode", Boolean)];
+/// OECF/SFR (2005 edition, page 86).
+const OECF_SFR: &[Field] =
+    &[(EXIF, "Columns", Integer), (EXIF, "Rows", Integer), (EXIF, "Names", Ty::Seq(&Text)), (EXIF, "Values", Ty::Seq(&Rational))];
+/// CFAPattern (2005 edition, page 87).
+const CFA_PATTERN: &[Field] = &[(EXIF, "Columns", Integer), (EXIF, "Rows", Integer), (EXIF, "Values", Ty::Seq(&Integer))];
+/// DeviceSettings (2005 edition, page 87).
+const DEVICE_SETTINGS: &[Field] = &[(EXIF, "Columns", Integer), (EXIF, "Rows", Integer), (EXIF, "Settings", Ty::Seq(&Text))];
 
 const SCHEMAS: &[Schema] = &[
     // ISO 16684-1 Table 4.
@@ -452,11 +472,131 @@ const SCHEMAS: &[Schema] = &[
             ("WhiteBalance", Text),
         ],
     },
+    // 2005 edition, "EXIF Schema for TIFF Properties", pages 58–60. A Closed Choice of Integer is an
+    // Integer.
+    Schema {
+        uri: "http://ns.adobe.com/tiff/1.0/",
+        prefix: "tiff",
+        properties: &[
+            ("ImageWidth", Integer),
+            ("ImageLength", Integer),
+            ("BitsPerSample", Ty::Seq(&Integer)),
+            ("Compression", Integer),
+            ("PhotometricInterpretation", Integer),
+            ("Orientation", Integer),
+            ("SamplesPerPixel", Integer),
+            ("PlanarConfiguration", Integer),
+            ("YCbCrSubSampling", Ty::Seq(&Integer)),
+            ("YCbCrPositioning", Integer),
+            ("XResolution", Rational),
+            ("YResolution", Rational),
+            ("ResolutionUnit", Integer),
+            ("TransferFunction", Ty::Seq(&Integer)),
+            ("WhitePoint", Ty::Seq(&Rational)),
+            ("PrimaryChromaticities", Ty::Seq(&Rational)),
+            ("YCbCrCoefficients", Ty::Seq(&Rational)),
+            ("ReferenceBlackWhite", Ty::Seq(&Rational)),
+            ("DateTime", Date),
+            ("ImageDescription", LangAlt),
+            ("Make", Text),
+            ("Model", Text),
+            ("Software", Text),
+            ("Artist", Text),
+            ("Copyright", LangAlt),
+        ],
+    },
+    // 2005 edition, "EXIF Schema for EXIF-specific Properties", pages 60–69.
+    Schema {
+        uri: EXIF,
+        prefix: "exif",
+        properties: &[
+            ("ExifVersion", Text),
+            ("FlashpixVersion", Text),
+            ("ColorSpace", Integer),
+            ("ComponentsConfiguration", Ty::Seq(&Integer)),
+            ("CompressedBitsPerPixel", Rational),
+            ("PixelXDimension", Integer),
+            ("PixelYDimension", Integer),
+            ("UserComment", LangAlt),
+            ("RelatedSoundFile", Text),
+            ("DateTimeOriginal", Date),
+            ("DateTimeDigitized", Date),
+            ("ExposureTime", Rational),
+            ("FNumber", Rational),
+            ("ExposureProgram", Integer),
+            ("SpectralSensitivity", Text),
+            ("ISOSpeedRatings", Ty::Seq(&Integer)),
+            ("OECF", Ty::Struct("OECF/SFR", OECF_SFR)),
+            ("ShutterSpeedValue", Rational),
+            ("ApertureValue", Rational),
+            ("BrightnessValue", Rational),
+            ("ExposureBiasValue", Rational),
+            ("MaxApertureValue", Rational),
+            ("SubjectDistance", Rational),
+            ("MeteringMode", Integer),
+            ("LightSource", Integer),
+            ("Flash", Ty::Struct("Flash", FLASH)),
+            ("FocalLength", Rational),
+            ("SubjectArea", Ty::Seq(&Integer)),
+            ("FlashEnergy", Rational),
+            ("SpatialFrequencyResponse", Ty::Struct("OECF/SFR", OECF_SFR)),
+            ("FocalPlaneXResolution", Rational),
+            ("FocalPlaneYResolution", Rational),
+            ("FocalPlaneResolutionUnit", Integer),
+            ("SubjectLocation", Ty::Seq(&Integer)),
+            ("ExposureIndex", Rational),
+            ("SensingMethod", Integer),
+            ("FileSource", Integer),
+            ("SceneType", Integer),
+            ("CFAPattern", Ty::Struct("CFAPattern", CFA_PATTERN)),
+            ("CustomRendered", Integer),
+            ("ExposureMode", Integer),
+            ("WhiteBalance", Integer),
+            ("DigitalZoomRatio", Rational),
+            ("FocalLengthIn35mmFilm", Integer),
+            ("SceneCaptureType", Integer),
+            ("GainControl", Integer),
+            ("Contrast", Integer),
+            ("Saturation", Integer),
+            ("Sharpness", Integer),
+            ("DeviceSettingDescription", Ty::Struct("DeviceSettings", DEVICE_SETTINGS)),
+            ("SubjectDistanceRange", Integer),
+            ("ImageUniqueID", Text),
+            ("GPSVersionID", Text),
+            ("GPSLatitude", Ty::GpsCoordinate),
+            ("GPSLongitude", Ty::GpsCoordinate),
+            ("GPSAltitudeRef", Integer),
+            ("GPSAltitude", Rational),
+            ("GPSTimeStamp", Date),
+            ("GPSSatellites", Text),
+            ("GPSStatus", Text),
+            ("GPSMeasureMode", Text),
+            ("GPSDOP", Rational),
+            ("GPSSpeedRef", Text),
+            ("GPSSpeed", Rational),
+            ("GPSTrackRef", Text),
+            ("GPSTrack", Rational),
+            ("GPSImgDirectionRef", Text),
+            ("GPSImgDirection", Rational),
+            ("GPSMapDatum", Text),
+            ("GPSDestLatitude", Ty::GpsCoordinate),
+            ("GPSDestLongitude", Ty::GpsCoordinate),
+            ("GPSDestBearingRef", Text),
+            ("GPSDestBearing", Rational),
+            ("GPSDestDistanceRef", Text),
+            ("GPSDestDistance", Rational),
+            ("GPSProcessingMethod", Text),
+            ("GPSAreaInformation", Text),
+            ("GPSDifferential", Integer),
+        ],
+    },
+    // 2005 edition, "EXIF Schema for Additional EXIF Properties", page 69.
+    Schema { uri: "http://ns.adobe.com/exif/1.0/aux/", prefix: "aux", properties: &[("Lens", Text), ("SerialNumber", Text)] },
 ];
 
 /// Calls `f` with every metadata stream among the indirect objects `objs` (ISO 32000-1 14.3.2) that
 /// parses as XML, and the stream's object, each decoded once within one allowance.
-pub(crate) fn for_each_packet(objs: &[(ObjRef, std::sync::Arc<Object>)], mut f: impl FnMut(ObjRef, &roxmltree::Document<'_>)) {
+pub(crate) fn for_each_packet(objs: &[(ObjRef, std::sync::Arc<Object>)], mut f: impl FnMut(ObjRef, &El)) {
     let mut budget = DecodeBudget::new(MAX_METADATA_BYTES, 0);
     for (r, o) in objs {
         let Object::Stream(s) = &**o else { continue };
@@ -493,29 +633,34 @@ fn unicode(bytes: &[u8]) -> String {
 /// The properties of predefined schemas in the packet `doc` whose values don't have their type, in
 /// name order: each by its name with the namespace's preferred prefix and by its name as the packet
 /// writes it (see [`written`]), with the type it should have as [`named`] gives it.
-pub(crate) fn mistyped(doc: &roxmltree::Document<'_>) -> BTreeMap<(String, String), String> {
-    let mut out = BTreeMap::new();
-    let text = doc.input_text();
-    let descriptions = doc.descendants().filter(|n| is(n, RDF, "Description") && n.parent_element().is_some_and(|p| is(&p, RDF, "RDF")));
-    for d in descriptions {
-        for a in d.attributes() {
-            if let Some((schema, ty)) = a.namespace().and_then(|ns| property(ns, a.name()))
-                && !simple(ty, a.value())
-            {
-                let qname = text.get(a.range_qname()).unwrap_or_default();
-                out.insert((format!("{}:{}", schema.prefix, a.name()), written(qname, a.name())), named(ty));
+pub(crate) fn mistyped(doc: &El) -> BTreeMap<(String, String), String> {
+    fn walk<'a>(el: &'a El, parent_scope: &NsScope<'a>, parent_is_rdf: bool, out: &mut BTreeMap<(String, String), String>) {
+        let scope = parent_scope.child(el);
+        if parent_is_rdf && scope.is(el, RDF, "Description") {
+            for (k, v) in &el.attrs {
+                let local = k.split_once(':').map_or(k.as_str(), |(_, l)| l);
+                if let Some((schema, ty)) = scope.attr_ns(k).and_then(|ns| property(ns, local))
+                    && !simple(ty, v)
+                {
+                    out.insert((format!("{}:{}", schema.prefix, local), written(k, local)), named(ty));
+                }
+            }
+            for p in el.elements() {
+                let p_scope = scope.child(p);
+                if let Some((schema, ty)) = p_scope.el_ns(p).and_then(|ns| property(ns, p.local()))
+                    && !fits(ty, p, &p_scope, 0)
+                {
+                    out.insert((format!("{}:{}", schema.prefix, p.local()), written(&p.name, p.local())), named(ty));
+                }
             }
         }
-        for p in d.children().filter(Node::is_element) {
-            let name = p.tag_name();
-            if let Some((schema, ty)) = name.namespace().and_then(|ns| property(ns, name.name()))
-                && !fits(ty, &p, 0)
-            {
-                let qname = text.get(p.range()).unwrap_or_default().strip_prefix('<').unwrap_or_default();
-                out.insert((format!("{}:{}", schema.prefix, name.name()), written(qname, name.name())), named(ty));
-            }
+        let is_rdf = scope.is(el, RDF, "RDF");
+        for child in el.elements() {
+            walk(child, &scope, is_rdf, out);
         }
     }
+    let mut out = BTreeMap::new();
+    walk(doc, &NsScope::root(), false, &mut out);
     out
 }
 
@@ -535,8 +680,8 @@ fn written(qname: &str, local: &str) -> String {
     format!("{out}:{local}")
 }
 
-/// `ty` as the XMP Specification writes value types: `Integer`, `Lang Alt`, `seq Rational`, a
-/// structure by its type's name, such as `Dimensions`.
+/// `ty` as the XMP Specification writes value types: `Integer`, `GPSCoordinate`, `Lang Alt`,
+/// `seq Rational`, a structure by its type's name, such as `Flash`.
 fn named(ty: Ty) -> String {
     let array = |kind: &str, item: &Ty| format!("{kind} {}", named(*item));
     match ty {
@@ -547,6 +692,7 @@ fn named(ty: Ty) -> String {
         Boolean => "Boolean".into(),
         Date => "Date".into(),
         Rational => "Rational".into(),
+        Ty::GpsCoordinate => "GPSCoordinate".into(),
         LangAlt => "Lang Alt".into(),
         Ty::Seq(item) => array("seq", item),
         Ty::Bag(item) => array("bag", item),
@@ -562,62 +708,69 @@ fn property(ns: &str, name: &str) -> Option<(&'static Schema, Ty)> {
     schema.properties.iter().find(|(n, _)| *n == name).map(|(_, t)| (schema, *t))
 }
 
-fn is(n: &Node<'_, '_>, ns: &str, name: &str) -> bool {
-    n.is_element() && n.tag_name().namespace() == Some(ns) && n.tag_name().name() == name
+fn is<'a>(n: &El, scope: &NsScope<'a>, ns: &str, name: &str) -> bool {
+    scope.is(n, ns, name)
 }
 
 /// The attributes of `n` that are fields or qualifiers, not RDF or XML syntax.
-fn field_attributes<'a, 'i>(n: &Node<'a, 'i>) -> impl Iterator<Item = roxmltree::Attribute<'a, 'i>> {
-    n.attributes().filter(|a| !matches!(a.namespace(), Some(RDF) | Some(XML)))
+fn field_attributes<'a>(n: &'a El, scope: &'a NsScope<'a>) -> impl Iterator<Item = (&'a str, &'a str)> + 'a {
+    n.attrs
+        .iter()
+        .filter(move |(k, _)| k != "xmlns" && !k.starts_with("xmlns:") && !matches!(scope.attr_ns(k), Some(RDF) | Some(XML)))
+        .map(|(k, v)| (k.as_str(), v.as_str()))
 }
 
 /// Whether the value of the property or array item element `e` has type `ty`.
-fn fits(ty: Ty, e: &Node<'_, '_>, depth: usize) -> bool {
+fn fits<'a>(ty: Ty, e: &'a El, scope: &NsScope<'a>, depth: usize) -> bool {
     if depth > MAX_DEPTH {
         return false;
     }
     let deeper = depth + 1;
-    let children: Vec<Node<'_, '_>> = e.children().filter(Node::is_element).collect();
+    let children: Vec<(&'a El, NsScope<'a>)> = e.elements().map(|c| (c, scope.child(c))).collect();
     // A qualified value: `rdf:value` holds the value itself (ISO 16684-1 7.9.2.5).
-    let resource = e.attribute((RDF, "parseType")) == Some("Resource");
+    let resource = scope.attr(e, RDF, "parseType") == Some("Resource");
     // `parseType="Resource"` is the only parse type XMP has (ISO 16684-1 7.9.2.5); an
     // `rdf:resource` element is empty.
-    if e.attribute((RDF, "parseType")).is_some_and(|p| p != "Resource") || e.attribute((RDF, "resource")).is_some() && !children.is_empty() {
+    if scope.attr(e, RDF, "parseType").is_some_and(|p| p != "Resource") || scope.attr(e, RDF, "resource").is_some() && !children.is_empty() {
         return false;
     }
     let description = match children.as_slice() {
-        [d] if is(d, RDF, "Description") => Some(*d),
+        [(d, ds)] if is(d, ds, RDF, "Description") => Some((*d, ds.clone())),
         _ => None,
     };
     // `rdf:value` as an element of a `parseType="Resource"` node or `rdf:Description`, or as an
     // attribute of the description or of an empty property element. Its qualifiers that are
     // predefined properties keep their types too.
-    let node = if resource { Some(*e) } else { description };
-    if let Some(n) = node {
+    let node = if resource { Some((e, scope.clone())) } else { description.clone() };
+    if let Some((n, ns)) = node {
         // A qualified value has one `rdf:value`: an element, or an attribute in its place.
-        match n.children().filter(|c| is(c, RDF, "value")).collect::<Vec<_>>().as_slice() {
+        let vals: Vec<_> = n.elements().filter(|c| is(c, &ns.child(c), RDF, "value")).collect();
+        match vals.as_slice() {
             [] => {}
-            [v] => return n.attribute((RDF, "value")).is_none() && blank(e) && blank(&n) && fits(ty, v, deeper) && predefined_ok(&n, deeper),
+            [v] => {
+                let vs = ns.child(v);
+                return ns.attr(n, RDF, "value").is_none() && blank(e) && blank(n) && fits(ty, v, &vs, deeper) && predefined_ok(n, &ns, deeper);
+            }
             _ => return false,
         }
     }
-    let attribute_node = description.or_else(|| (children.is_empty() && !resource).then_some(*e));
-    if let Some(n) = attribute_node
-        && let Some(v) = n.attribute((RDF, "value"))
+    let attribute_node = description.as_ref().map(|(d, ds)| (*d, ds)).or_else(|| (children.is_empty() && !resource).then_some((e, scope)));
+    if let Some((n, ns)) = attribute_node
+        && let Some(v) = ns.attr(n, RDF, "value")
     {
-        return blank(e) && blank(&n) && simple(ty, v) && predefined_ok(&n, deeper);
+        return blank(e) && blank(n) && simple(ty, v) && predefined_ok(n, ns, deeper);
     }
     match ty {
-        Ty::Text | Ty::Guid | Ty::Integer | Ty::Real | Ty::Boolean | Ty::Date | Ty::Rational => {
+        Ty::Text | Ty::Guid | Ty::Integer | Ty::Real | Ty::Boolean | Ty::Date | Ty::Rational | Ty::GpsCoordinate => {
             // `rdf:resource` makes the value a URI, which only a text type takes.
             // The element is then empty.
-            if e.attribute((RDF, "resource")).is_some() {
+            if scope.attr(e, RDF, "resource").is_some() {
                 return matches!(ty, Ty::Text) && children.is_empty() && blank(e);
             }
-            children.is_empty() && !resource && field_attributes(e).next().is_none() && simple(ty, &text(e))
+            children.is_empty() && !resource && field_attributes(e, scope).next().is_none() && simple(ty, &text(e))
         }
-        Ty::LangAlt => match array(e, &children, "Alt") {
-            Some(items) => items.iter().all(|i| i.attribute((XML, "lang")).is_some() && fits(Ty::Text, i, deeper)),
+        Ty::LangAlt => match array(e, scope, &children, "Alt") {
+            Some(items) => items.iter().all(|(i, iscope)| iscope.attr(i, XML, "lang").is_some() && fits(Ty::Text, i, iscope, deeper)),
             None => false,
         },
         Ty::Seq(item) | Ty::Bag(item) | Ty::Alt(item) => {
@@ -626,18 +779,21 @@ fn fits(ty: Ty, e: &Node<'_, '_>, depth: usize) -> bool {
                 Ty::Bag(_) => "Bag",
                 _ => "Alt",
             };
-            array(e, &children, kind).is_some_and(|items| items.iter().all(|i| fits(*item, i, deeper)))
+            array(e, scope, &children, kind).is_some_and(|items| items.iter().all(|(i, iscope)| fits(*item, i, iscope, deeper)))
         }
         Ty::Struct(_, fields) => {
-            let Some(holder) = structure(e, &children, resource, description) else { return false };
-            let attrs_ok = field_attributes(&holder).all(|a| match a.namespace().and_then(|ns| field(fields, ns, a.name())) {
-                Some(t) => simple(t, a.value()),
-                None => true,
+            let Some((holder, hscope)) = structure(e, scope, &children, resource, description.as_ref()) else { return false };
+            let attrs_ok = field_attributes(holder, &hscope).all(|(k, v)| {
+                let local = k.split_once(':').map_or(k, |(_, l)| l);
+                match hscope.attr_ns(k).and_then(|ns| field(fields, ns, local)) {
+                    Some(t) => simple(t, v),
+                    None => true,
+                }
             });
-            let elements_ok = holder.children().filter(Node::is_element).all(|f| {
-                let n = f.tag_name();
-                match n.namespace().and_then(|ns| field(fields, ns, n.name())) {
-                    Some(t) => fits(t, &f, deeper),
+            let elements_ok = holder.elements().all(|f| {
+                let fs = hscope.child(f);
+                match fs.el_ns(f).and_then(|ns| field(fields, ns, f.local())) {
+                    Some(t) => fits(t, f, &fs, deeper),
                     None => true,
                 }
             });
@@ -645,18 +801,23 @@ fn fits(ty: Ty, e: &Node<'_, '_>, depth: usize) -> bool {
         }
         // A structure of any fields, such as a Pantry item: predefined properties in it still have
         // their types.
-        Ty::AnyStruct => structure(e, &children, resource, description).is_some_and(|holder| predefined_ok(&holder, deeper)),
-        Ty::OneOf(types) => types.iter().any(|t| fits(*t, e, depth)),
+        Ty::AnyStruct => {
+            structure(e, scope, &children, resource, description.as_ref()).is_some_and(|(holder, hscope)| predefined_ok(holder, &hscope, deeper))
+        }
+        Ty::OneOf(types) => types.iter().any(|t| fits(*t, e, scope, depth)),
     }
 }
 
 /// Whether the fields of `holder`, as attributes and elements, that are predefined properties have
 /// their types.
-fn predefined_ok(holder: &Node<'_, '_>, depth: usize) -> bool {
-    let attrs_ok = field_attributes(holder).all(|a| a.namespace().and_then(|ns| property(ns, a.name())).is_none_or(|(_, t)| simple(t, a.value())));
-    let elements_ok = holder.children().filter(Node::is_element).all(|f| {
-        let n = f.tag_name();
-        n.namespace().and_then(|ns| property(ns, n.name())).is_none_or(|(_, t)| fits(t, &f, depth))
+fn predefined_ok<'a>(holder: &'a El, scope: &NsScope<'a>, depth: usize) -> bool {
+    let attrs_ok = field_attributes(holder, scope).all(|(k, v)| {
+        let local = k.split_once(':').map_or(k, |(_, l)| l);
+        scope.attr_ns(k).and_then(|ns| property(ns, local)).is_none_or(|(_, t)| simple(t, v))
+    });
+    let elements_ok = holder.elements().all(|f| {
+        let fs = scope.child(f);
+        fs.el_ns(f).and_then(|ns| property(ns, f.local())).is_none_or(|(_, t)| fits(t, f, &fs, depth))
     });
     attrs_ok && elements_ok
 }
@@ -666,46 +827,55 @@ fn field(fields: &[Field], ns: &str, name: &str) -> Option<Ty> {
 }
 
 /// The items of `e`'s value when it is an `rdf:<kind>` array.
-fn array<'a, 'i>(e: &Node<'a, 'i>, children: &[Node<'a, 'i>], kind: &str) -> Option<Vec<Node<'a, 'i>>> {
+fn array<'a>(e: &'a El, scope: &NsScope<'a>, children: &[(&'a El, NsScope<'a>)], kind: &str) -> Option<Vec<(&'a El, NsScope<'a>)>> {
     match children {
         // Items are `rdf:li` (ISO 16684-1 7.9.2.4); any other element, or character data around
         // them, breaks the array, and so does `rdf:parseType` or `rdf:resource` on the property,
         // which makes its value something else.
-        [a] if is(a, RDF, kind) && field_attributes(e).next().is_none() && blank(e) && blank(a) && !other_value_form(e) => {
-            let items: Vec<Node<'a, 'i>> = a.children().filter(Node::is_element).collect();
-            items.iter().all(|i| is(i, RDF, "li")).then_some(items)
+        [(a, ascope)]
+            if is(a, ascope, RDF, kind) && field_attributes(e, scope).next().is_none() && blank(e) && blank(a) && !other_value_form(e, scope) =>
+        {
+            let items: Vec<(&'a El, NsScope<'a>)> = a.elements().map(|i| (i, ascope.child(i))).collect();
+            items.iter().all(|(i, iscope)| is(i, iscope, RDF, "li")).then_some(items)
         }
         _ => None,
     }
 }
 
 /// The node holding the fields of `e`'s value when it is a structure.
-fn structure<'a, 'i>(e: &Node<'a, 'i>, children: &[Node<'a, 'i>], resource: bool, description: Option<Node<'a, 'i>>) -> Option<Node<'a, 'i>> {
+fn structure<'a>(
+    e: &'a El,
+    scope: &NsScope<'a>,
+    children: &[(&'a El, NsScope<'a>)],
+    resource: bool,
+    description: Option<&(&'a El, NsScope<'a>)>,
+) -> Option<(&'a El, NsScope<'a>)> {
     if resource {
         // A structure's fields are elements; character data has no place in it.
-        return text(e).trim().is_empty().then_some(*e);
+        return text(e).trim().is_empty().then_some((e, scope.clone()));
     }
-    if let Some(d) = description {
-        return (blank(e) && blank(&d)).then_some(d);
+    if let Some((d, ds)) = description {
+        return (blank(e) && blank(d)).then_some((*d, ds.clone()));
     }
     // Fields written as attributes of the property element, with no content.
     let empty = text(e).trim().is_empty();
-    (children.is_empty() && empty && e.attribute((RDF, "resource")).is_none() && field_attributes(e).next().is_some()).then_some(*e)
+    (children.is_empty() && empty && scope.attr(e, RDF, "resource").is_none() && field_attributes(e, scope).next().is_some())
+        .then_some((e, scope.clone()))
 }
 
 /// Whether `e` says its value is a resource or a literal of another kind, not the element it holds.
-fn other_value_form(e: &Node<'_, '_>) -> bool {
-    e.attribute((RDF, "parseType")).is_some() || e.attribute((RDF, "resource")).is_some()
+fn other_value_form<'a>(e: &El, scope: &NsScope<'a>) -> bool {
+    scope.attr(e, RDF, "parseType").is_some() || scope.attr(e, RDF, "resource").is_some()
 }
 
 /// Whether `e` holds no character data but white space.
-fn blank(e: &Node<'_, '_>) -> bool {
+fn blank(e: &El) -> bool {
     text(e).trim().is_empty()
 }
 
 /// All the character data directly in `e`, however comments or other nodes split it.
-fn text(e: &Node<'_, '_>) -> String {
-    e.children().filter(Node::is_text).filter_map(|t| t.text()).collect()
+fn text(e: &El) -> String {
+    e.text().into_owned()
 }
 
 /// Whether the simple value `v` has the simple type `ty`.
@@ -716,10 +886,23 @@ fn simple(ty: Ty, v: &str) -> bool {
         Ty::Boolean => matches!(v, "True" | "False"),
         Ty::Date => date(v),
         Ty::Rational => v.split_once('/').is_some_and(|(n, d)| integer(n) && integer(d)),
+        Ty::GpsCoordinate => gps_coordinate(v),
         Ty::Text | Ty::Guid => true,
         Ty::OneOf(types) => types.iter().any(|t| simple(*t, v)),
         _ => false,
     }
+}
+
+/// `DDD,MM,SSk` or `DDD,MM.mmk`: degrees, minutes and seconds or minutes with any number of
+/// fractional digits, then N, S, E or W (2005 edition, page 85).
+fn gps_coordinate(v: &str) -> bool {
+    let Some(v) = v.strip_suffix(['N', 'S', 'E', 'W']) else { return false };
+    let Some((degrees, rest)) = v.split_once(',') else { return false };
+    let minutes_ok = match rest.split_once(',') {
+        Some((minutes, seconds)) => digits(minutes) && digits(seconds),
+        None => rest.split_once('.').is_some_and(|(m, f)| digits(m) && digits(f)),
+    };
+    digits(degrees) && minutes_ok
 }
 
 fn digits(s: &str) -> bool {

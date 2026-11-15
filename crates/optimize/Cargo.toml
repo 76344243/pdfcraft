@@ -17,11 +17,13 @@ pdfcraft-content = { workspace = true }
 pdfcraft-model = { workspace = true }
 pdfcraft-annot = { workspace = true }
 thiserror.workspace = true
-# JPEG decoding (zune-jpeg) and encoding, and bicubic resampling; already in the tree.
-image = { version = "0.25", default-features = false, features = ["jpeg"] }
-# The same JPEG decoder, used directly to read samples untransformed (/ColorTransform 0).
+# Bicubic resampling; zero codec features.
+image = { version = "0.25", default-features = false }
+# JPEG decoding and encoding via craft-libs.
+craft-jpeg = { workspace = true }
+craft-image-codecs = { workspace = true }
+# CMYK images (crate::cmyk): reading samples untransformed and writing four-component JPEGs.
 zune-jpeg = "0.5"
-# CMYK images: writing four-component JPEGs (crate::cmyk).
 jpeg-encoder = "0.7"
 
 # Lets other programs go first while a copy is being made.

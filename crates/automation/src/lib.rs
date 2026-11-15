@@ -22,6 +22,7 @@ mod content;
 mod conventions;
 pub mod file_access;
 mod forms;
+mod hairlines;
 mod layers;
 mod links;
 #[cfg(feature = "mcp")]
@@ -29,6 +30,7 @@ pub mod mcp;
 mod measure;
 mod model3d;
 mod model_render;
+mod print_colour;
 mod printing;
 mod reading;
 mod redact;
